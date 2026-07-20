@@ -1,4 +1,4 @@
---# TTB label verification prototype
+# TTB label verification prototype
 
 Checks a photograph of an alcohol beverage label against its submitted
 application data, flagging brand name, class/type, ABV, net contents, and
@@ -47,12 +47,25 @@ cd scripts
 python generate_test_batch.py [count]   # count defaults to 300
 ```
 
-It writes `test_labels/*.png` and `test_labels_application_data.csv`; in the
-batch form, drop the images on the image zone and the CSV on the CSV zone
-(matched by filename). It injects a deliberate mix — ~80% pass, ~10% brand
-near-miss (→ review), ~10% warning-statement violation (→ fail) — so you can
-watch real pass/review/fail counts at scale, and it renders "GOVERNMENT
-WARNING" in a real cross-platform bold font so the bold check passes.
+It writes `test_labels/*.png`, `test_labels_application_data.csv`, and
+`test_labels_expected.csv` (filename → expected verdict and the defect
+injected to cause it, for diffing against a real run). In the batch form,
+drop the images on the image zone and the application-data CSV on the CSV
+zone — never the expected-verdicts file — matched by filename.
+
+It injects a deliberate mix — one third clean pass, one third near-miss
+(→ review), one third fail, with the failures split roughly half
+government-warning defects (not bold, not all caps, altered wording) and
+half other fields (brand, ABV, net contents, class/type). Independently:
+one third each distilled spirits / wine / beer, and 20% imports. So you can
+watch real pass/review/fail counts at scale.
+
+Near-misses are chosen by running the API's own `fuzzy_match` and keeping
+whichever candidate it calls "review", so `config.py`'s thresholds stay the
+single source of truth; every fixture is then checked through the real
+comparison logic and generation aborts if one wouldn't produce its intended
+verdict. It renders "GOVERNMENT WARNING" in a real cross-platform bold font
+so the bold check passes.
 
 ### Frontend
 
@@ -147,12 +160,13 @@ layers add navigation overhead without adding clarity (see ADR.md).
 Requirements were split into explicit (stated in the interviews) and
 implicit (inferred from context, anecdotes, or research) and ranked by
 consequence, not source — full table in
-[ADR.md §0](./ADR.md#0-requirements-traceability--explicit-vs-implicit-ranked).
+[ADR.md §0](./ADR.md#0-requirements--explicit-vs-implicit).
 
 - **Two comparison strategies**, not one generic score: fuzzy matching
-  (tolerant of cosmetic differences) for brand name, class/type, and net
-  contents; strict exact matching for the government warning, which is
-  federally fixed and admits no variation.
+  (tolerant of cosmetic differences) for brand name, class/type, net
+  contents, bottler name/address, and country of origin; strict exact
+  matching for the government warning, which is federally fixed and admits
+  no variation.
 - **One external dependency** (the vision call), isolated in
   `extraction.py`, so it's the only thing to change if a deployment's
   firewall blocks it.
@@ -179,11 +193,18 @@ polled job so the app stays stateless) is in ADR.md §13.
 
 ## Scope
 
-Targets **distilled spirits** labels specifically, checking the six
-universally mandatory fields (brand name, class/type, ABV, net contents,
-bottler name/address, government warning) per TTB's own "Checklist of
-Mandatory Label Information — Distilled Spirits." Conditional fields
-(country of origin, sulfite/coloring disclosures, age statements, etc.),
-the "same field of vision" placement rule, beer/wine formatting rules,
-image-quality robustness, and COLA system integration are explicitly out of
-scope — see ADR.md §10–11 for the full list and why.
+Checks the six universally mandatory fields — brand name, class/type, ABV,
+net contents, bottler name/address, and the government warning — across all
+three product classes: **distilled spirits, wine, and beer/malt beverages**,
+per TTB's own "Checklist of Mandatory Label Information" for each. ABV uses
+the wider federal tolerance for wine at or above 14% (27 CFR); every other
+check is class-independent.
+
+**Country of origin** is compared when the applicant supplies it — blank
+means not applicable, so it's checked for imports and skipped for domestic
+products.
+
+Out of scope: the remaining type-conditional disclosures (sulfite and
+coloring statements, age statements, etc.), the "same field of vision"
+placement rule, class-specific formatting rules, image-quality robustness,
+and COLA system integration — see ADR.md §11 for the full list and why.

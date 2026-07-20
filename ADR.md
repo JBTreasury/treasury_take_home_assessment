@@ -18,6 +18,8 @@ README.md is the "how" (setup, run, summary); this file is the "why."
 11. Deferred / out of scope
 12. Batch input: CSV matched by filename
 13. Streaming batch results (live progress)
+14. Flat file structure, minimal abstraction
+15. Conditional, class-specific label fields
 
 ---
 
@@ -58,8 +60,8 @@ are no user accounts or sessions to track, and a database would bring
 privacy and data-retention obligations with no upside at this scale.
 
 **Alternative:** a small SQLite database to track batch progress. Not
-needed — a batch returns all its results in one response, so there's no
-in-progress state to remember between requests.
+needed — a batch streams its results back over one open request (§13), so
+there's no in-progress state to remember between requests.
 
 **Trade-off:** no record of past checks. A production system would want one
 for compliance.
@@ -130,9 +132,9 @@ than adding a subclass. Fine — none is planned.
 
 ## 6. Fuzzy vs. strict comparison
 
-> Forgiving similarity matching for brand/class/net-contents; exact matching
-> for the government warning; a numeric tolerance for ABV (wider for high-ABV
-> wine).
+> Forgiving similarity matching for brand, class/type, net contents, bottler
+> name/address, and country of origin when supplied; exact matching for the
+> government warning; a numeric tolerance for ABV (wider for high-ABV wine).
 
 **Why:** Dave (senior agent) pointed to rejecting "STONE'S THROW" vs "Stone's
 Throw" — plainly the same brand, but an exact text match flags it, and that
@@ -213,7 +215,7 @@ is what's sent to the vision API too, so a spoofed header can't slip through.
 > Intentionally left out — deliberate scoping, not oversights.
 
 - Blurry, glare, or poorly-lit photos (Jenny flagged this herself).
-- Type-specific conditional label fields (beyond the core set the app checks).
+- Type-specific conditional label fields, which vary by product class — see §15.
 - COLA system integration (the real system is .NET and years away, per Marcus).
 - Authentication / access control, PII/retention (no data is stored — see §1).
 - Per-caller rate limiting (total concurrency is capped; per-user is not).
@@ -266,6 +268,14 @@ finish, nothing is stored.
 sorts by filename before rendering), and the response is no longer one JSON
 object, so a consumer must read it line by line.
 
+**Implementation constraint:** every upload must be read into memory *before*
+the streaming response begins. FastAPI closes the multipart form — and with it
+each `UploadFile`'s spooled temp file — as soon as the handler returns, which
+is before the response body is iterated. Reading lazily inside the generator
+raises "I/O operation on closed file" and kills the stream after the `meta`
+line, which surfaces as a progress bar frozen at 0.
+
+---
 
 ## 14. Flat file structure, minimal abstraction
 
@@ -290,3 +300,50 @@ concrete examples, once they exist, is easy and well-motivated.
 **Trade-off:** if this app ever grows a second, genuinely distinct
 feature, the flat layout would need to become more structured. Not a
 cost worth paying today for a one-feature app.
+
+---
+
+## 15. Conditional, class-specific label fields
+
+> The app checks the six fields mandatory for every product class. The
+> conditional fields that vary by class — sulfite declarations, age
+> statements, appellation/varietal rules, coloring disclosures, placement —
+> are deliberately not checked.
+
+**Why:** brand name, class/type, ABV, net contents, bottler name/address, and
+the government warning are required for distilled spirits, wine, and malt
+beverages alike. One comparison path therefore covers every product, which is
+what keeps the prototype small enough to be verifiably correct.
+
+A conditional field needs two things the core six don't: its own comparison
+rule, *and* a reliable signal for whether it applies to this product at all.
+The application data carries no such signal — nothing states whether a wine
+was sulfited, whether a spirit is young enough to require an age statement, or
+whether a colorant was used. The app would have to guess at applicability
+before it could begin comparing, and a wrong guess produces exactly the
+failure Dave complained about: a confident false rejection that wastes an
+agent's time. A check that can't tell whether it should run is worse than no
+check.
+
+**Deliberately excluded:**
+
+- Sulfite declaration, appellation and varietal rules (wine)
+- Age statements (distilled spirits)
+- FD&C coloring disclosures
+- The "same field of vision" placement rule
+
+**Where the line is drawn:** two class-dependent behaviours *are* implemented,
+because each modifies a comparison the app already makes rather than adding a
+field with new applicability logic:
+
+- The wider federal ABV tolerance for wine at or above 14% (27 CFR) — same
+  field, same comparison, different threshold.
+- Country of origin — compared when the applicant fills it in, skipped when
+  blank, so applicability comes from submitted data rather than a guess (§6).
+
+**Trade-off:** a label that passes every check here can still be
+non-compliant on a conditional field. This is a pre-screen that catches the
+universal errors before an agent looks, not a replacement for full review.
+Extending it means first deciding where applicability data comes from — an
+expanded application form, or inference from the label itself — which is a
+requirements question, not a coding one.
