@@ -1,0 +1,32 @@
+# --- Python ---
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# --- Node ---
+node_modules/
+dist/
+build/
+
+# --- Secrets ---
+# ANTHROPIC_API_KEY is read from the environment (extraction.py), never committed.
+.env
+.env.*
+!.env.example
+
+# --- Generated test fixtures ---
+# All three regenerate deterministically (seed 42):
+#   python scripts/generate_test_batch.py 300
+scripts/test_labels/
+scripts/test_labels_application_data.csv
+scripts/test_labels_expected.csv
+
+# --- Local tool state ---
+.claude/settings.local.json
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
