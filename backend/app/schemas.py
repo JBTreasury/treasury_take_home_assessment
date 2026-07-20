@@ -42,12 +42,3 @@ class VerificationResult(BaseModel):
     overall_status: str
     fields: list[FieldResultOut]
     error: str | None = None
-
-
-class BatchVerificationResponse(BaseModel):
-    results: list[VerificationResult]
-    total: int
-    passed: int
-    review: int
-    failed: int
-    errored: int

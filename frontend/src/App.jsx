@@ -7,6 +7,49 @@ const STATUS_LABEL = {
   error: "Could Not Process",
 };
 
+const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png"];
+
+// One dropzone for all three pickers (single image, batch images, batch CSV).
+// Owns its own drag-highlight state; the parent only cares about the files.
+function Dropzone({ title, sub, accept, multiple = false, onFiles }) {
+  const [active, setActive] = useState(false);
+
+  const handleDrag = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setActive(e.type === "dragenter" || e.type === "dragover");
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setActive(false);
+    onFiles(e.dataTransfer.files);
+  };
+
+  return (
+    <div
+      className={`dropzone${active ? " dropzone-active" : ""}`}
+      onDragEnter={handleDrag}
+      onDragOver={handleDrag}
+      onDragLeave={handleDrag}
+      onDrop={handleDrop}
+    >
+      <label className="dropzone-label">
+        <span className="dropzone-title">{title}</span>
+        <span className="dropzone-sub">{sub}</span>
+        <input
+          type="file"
+          accept={accept}
+          multiple={multiple}
+          className="dropzone-input"
+          onChange={(e) => onFiles(e.target.files)}
+        />
+      </label>
+    </div>
+  );
+}
+
 function StatusBadge({ status }) {
   return <span className={`badge badge-${status}`}>{STATUS_LABEL[status] || status}</span>;
 }
@@ -69,26 +112,10 @@ function SingleVerifyForm() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [dragActive, setDragActive] = useState(false);
 
   const setImage = (fileList) => {
-    const img = Array.from(fileList).find(
-      (f) => f.type === "image/jpeg" || f.type === "image/png"
-    );
+    const img = Array.from(fileList).find((f) => ACCEPTED_IMAGE_TYPES.includes(f.type));
     if (img) setFile(img);
-  };
-
-  const handleDrag = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(e.type === "dragenter" || e.type === "dragover");
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    setImage(e.dataTransfer.files);
   };
 
   const handleSubmit = async (e) => {
@@ -125,28 +152,12 @@ function SingleVerifyForm() {
   return (
     <div>
       <form onSubmit={handleSubmit} className="form">
-        <div
-          className={`dropzone${dragActive ? " dropzone-active" : ""}`}
-          onDragEnter={handleDrag}
-          onDragOver={handleDrag}
-          onDragLeave={handleDrag}
-          onDrop={handleDrop}
-        >
-          <label className="dropzone-label">
-            <span className="dropzone-title">
-              Drag and Drop a Label Image, or Click to Browse
-            </span>
-            <span className="dropzone-sub">
-              JPEG or PNG, up to 1.5MB{file ? ` — ${file.name}` : ""}
-            </span>
-            <input
-              type="file"
-              accept="image/jpeg,image/png"
-              className="dropzone-input"
-              onChange={(e) => setImage(e.target.files)}
-            />
-          </label>
-        </div>
+        <Dropzone
+          title="Drag and Drop a Label Image, or Click to Browse"
+          sub={`JPEG or PNG, up to 1.5MB${file ? ` — ${file.name}` : ""}`}
+          accept={ACCEPTED_IMAGE_TYPES.join(",")}
+          onFiles={setImage}
+        />
 
         <p className="section-label">Add Application Information</p>
 
@@ -253,8 +264,6 @@ function SingleVerifyForm() {
 function BatchVerifyForm() {
   const [files, setFiles] = useState([]);
   const [csvFile, setCsvFile] = useState(null);
-  const [dragActive, setDragActive] = useState(false);
-  const [csvDragActive, setCsvDragActive] = useState(false);
   const [summary, setSummary] = useState(null);
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -265,23 +274,8 @@ function BatchVerifyForm() {
   const [processTotal, setProcessTotal] = useState(0);
 
   const addFiles = (fileList) => {
-    const incoming = Array.from(fileList).filter(
-      (f) => f.type === "image/jpeg" || f.type === "image/png"
-    );
+    const incoming = Array.from(fileList).filter((f) => ACCEPTED_IMAGE_TYPES.includes(f.type));
     if (incoming.length > 0) setFiles(incoming);
-  };
-
-  const handleDrag = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(e.type === "dragenter" || e.type === "dragover");
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    addFiles(e.dataTransfer.files);
   };
 
   const setCsv = (fileList) => {
@@ -289,19 +283,6 @@ function BatchVerifyForm() {
       (f) => f.name.toLowerCase().endsWith(".csv") || f.type === "text/csv"
     );
     if (csv) setCsvFile(csv);
-  };
-
-  const handleCsvDrag = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setCsvDragActive(e.type === "dragenter" || e.type === "dragover");
-  };
-
-  const handleCsvDrop = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setCsvDragActive(false);
-    setCsv(e.dataTransfer.files);
   };
 
   const downloadTemplate = () => {
@@ -416,52 +397,23 @@ function BatchVerifyForm() {
   return (
     <div>
       <form onSubmit={handleSubmit} className="form">
-        <div
-          className={`dropzone${dragActive ? " dropzone-active" : ""}`}
-          onDragEnter={handleDrag}
-          onDragOver={handleDrag}
-          onDragLeave={handleDrag}
-          onDrop={handleDrop}
-        >
-          <label className="dropzone-label">
-            <span className="dropzone-title">
-              Drag and Drop Label Images, or Click to Browse
-            </span>
-            <span className="dropzone-sub">
-              JPEG or PNG, up to 1.5MB, max of 300 files{files.length > 0 ? ` — ${files.length} selected` : ""}
-            </span>
-            <input
-              type="file"
-              accept="image/jpeg,image/png"
-              multiple
-              className="dropzone-input"
-              onChange={(e) => addFiles(e.target.files)}
-            />
-          </label>
-        </div>
+        <Dropzone
+          title="Drag and Drop Label Images, or Click to Browse"
+          sub={`JPEG or PNG, up to 1.5MB, max of 300 files${
+            files.length > 0 ? ` — ${files.length} selected` : ""
+          }`}
+          accept={ACCEPTED_IMAGE_TYPES.join(",")}
+          multiple
+          onFiles={addFiles}
+        />
 
-        <div
-          className={`dropzone${csvDragActive ? " dropzone-active" : ""}`}
-          onDragEnter={handleCsvDrag}
-          onDragOver={handleCsvDrag}
-          onDragLeave={handleCsvDrag}
-          onDrop={handleCsvDrop}
-        >
-          <label className="dropzone-label">
-            <span className="dropzone-title">
-              Drag and Drop CSV File, or Click to Browse
-            </span>
-            <span className="dropzone-sub">
-              up to 300{csvFile ? ` — ${csvFile.name}` : ""}
-            </span>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              className="dropzone-input"
-              onChange={(e) => setCsv(e.target.files)}
-            />
-          </label>
-        </div>
+        <Dropzone
+          title="Drag and Drop CSV File, or Click to Browse"
+          sub={`up to 300${csvFile ? ` — ${csvFile.name}` : ""}`}
+          accept=".csv,text/csv"
+          onFiles={setCsv}
+        />
+
         <button type="button" className="template-link" onClick={downloadTemplate}>
           Download CSV template
         </button>

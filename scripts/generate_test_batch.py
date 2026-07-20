@@ -18,33 +18,17 @@ Output:
         the specific defect injected. Diff this against the batch results
         to see whether the pipeline actually caught what was planted.
 
-Deliberately injects a controlled mix of outcomes, not all clean passes --
-useful for actually observing pass/review/fail counts at scale, not just
-whether the batch endpoint completes without crashing:
+Injects a fixed mix of pass / review / fail outcomes across the three beverage
+types and a share of imports, so a run exercises real verdict counts rather
+than just proving the endpoint completes. The exact proportions are in
+build_plan(); the defects are in build_label().
 
-    1/3 pass    -- application data matches the label
-    1/3 review  -- exactly one fuzzy field is a near-miss, scoring inside
-                   config's review band. Nothing else is wrong, so the
-                   worst-of roll-up in overall_status lands on "review".
-    1/3 fail    -- half from government warning defects (not bold, not all
-                   caps, altered wording), half from other fields (brand,
-                   ABV, net contents, class/type, country of origin).
-
-Independently of that: 1/3 distilled spirits, 1/3 wine, 1/3 beer, and 20%
-imports (which carry a country-of-origin statement on the label and in the
-CSV -- the API only compares that field when the applicant filled it in).
-
-Thresholds are NOT duplicated here. The near-miss perturbations are chosen
-by running the API's own comparison.fuzzy_match and keeping the candidate
-whose status is "review", so config.FUZZY_PASS_THRESHOLD and
-config.FUZZY_REVIEW_THRESHOLD remain the single source of truth. Every
-generated label is then run through the real comparison logic against a
-simulated perfect extraction, and generation aborts if any label would not
-produce its intended verdict.
-
-That simulation assumes the vision model reads the label correctly. It is a
-check on the fixtures, not on extraction quality -- a real run will differ
-wherever the model misreads an image.
+No thresholds are duplicated here. Near-misses are chosen by running the API's
+own fuzzy_match and keeping whichever candidate it calls "review", so config
+stays the single source of truth. Every label is then checked through the real
+comparison logic and generation aborts if one would not produce its intended
+verdict -- that check assumes a perfect extraction, so it validates the
+fixtures, not the vision model.
 
 Requires Pillow: pip install Pillow --break-system-packages (or just
 pip install Pillow inside your venv)
@@ -53,6 +37,7 @@ pip install Pillow inside your venv)
 import csv
 import random
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -71,12 +56,8 @@ EXPECTED_FILE = SCRIPT_DIR / "test_labels_expected.csv"
 # config.py reshapes the fixtures instead of silently invalidating them.
 sys.path.insert(0, str(BACKEND_DIR))
 from app import config  # noqa: E402
-from app.comparison import (  # noqa: E402
-    compare_abv,
-    fuzzy_match,
-    overall_status,
-    verify_warning_statement,
-)
+from app.comparison import compare_all, fuzzy_match, overall_status  # noqa: E402
+from app.schemas import ApplicationData, ExtractedLabelData  # noqa: E402
 
 CANONICAL_WARNING_TEXT = config.CANONICAL_WARNING_TEXT
 
@@ -182,13 +163,19 @@ _BOLD_FONTS = [
 ]
 
 
+@lru_cache(maxsize=None)
 def _font(bold, size):
+    """Cached: only four (bold, size) pairs exist, but 300 labels ask for them."""
     for path in (_BOLD_FONTS if bold else _REGULAR_FONTS):
         try:
             return ImageFont.truetype(path, size)
         except OSError:
             continue
     return ImageFont.load_default()
+
+
+def _warning_prefix(label):
+    return "GOVERNMENT WARNING:" if label["warning_caps"] else "Government Warning:"
 
 
 def make_label_image(path, label):
@@ -222,7 +209,7 @@ def make_label_image(path, label):
         draw.text((300, y), label["country"], font=font_small, fill=(40, 25, 10), anchor="ma")
 
     y += 60
-    prefix = "GOVERNMENT WARNING:" if label["warning_caps"] else "Government Warning:"
+    prefix = _warning_prefix(label)
     body = label["warning_text"].split(":", 1)[1].strip()
     lines = [prefix] + wrap_text(draw, body, font_small, 500)
     for line in lines:
@@ -236,8 +223,7 @@ def make_label_image(path, label):
 
 def _printed_warning(label):
     """The warning statement as it actually appears on the rendered image."""
-    prefix = "GOVERNMENT WARNING:" if label["warning_caps"] else "Government Warning:"
-    return f"{prefix} {label['warning_text'].split(':', 1)[1].strip()}"
+    return f"{_warning_prefix(label)} {label['warning_text'].split(':', 1)[1].strip()}"
 
 
 def near_miss(value, candidates):
@@ -330,19 +316,8 @@ def simulate_extraction(label):
 
 
 def predict(app, extracted):
-    """Mirror of main._verify_one's field list, using the same comparison code."""
-    results = [
-        fuzzy_match("brand_name", app["brand_name"], extracted["brand_name"]),
-        fuzzy_match("class_type", app["class_type"], extracted["class_type"]),
-        fuzzy_match("net_contents", app["net_contents"], extracted["net_contents"]),
-        fuzzy_match("name_address", app["name_address"], extracted["name_address"]),
-        compare_abv(float(app["abv"]), extracted["abv"], is_wine=(app["beverage_type"] == "wine")),
-        verify_warning_statement(extracted["warning_text"], extracted["warning_all_caps_bold"]),
-    ]
-    if app["country_of_origin"].strip():
-        results.append(
-            fuzzy_match("country_of_origin", app["country_of_origin"], extracted["country_of_origin"])
-        )
+    """Run the API's own comparison policy over one fixture."""
+    results = compare_all(ApplicationData(**app), ExtractedLabelData(**extracted))
     return overall_status(results), results
 
 

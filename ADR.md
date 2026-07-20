@@ -265,3 +265,28 @@ finish, nothing is stored.
 **Trade-off:** results arrive in completion order, not file order (the client
 sorts by filename before rendering), and the response is no longer one JSON
 object, so a consumer must read it line by line.
+
+
+## 14. Flat file structure, minimal abstraction
+
+**Decision:** five backend modules, three frontend files, no `services/`,
+`routes/`, `types/`, or class-hierarchy subfolders. One file per concern,
+not per possible future concern.
+
+**Why:** this codebase took the more "enterprise" path once, briefly --
+a `LabelExtractor` interface with a factory function (§5) -- before there
+was a second implementation to justify it. Reverted, because the
+abstraction wasn't paying for itself: one provider, one plain function,
+done. The same logic governs the whole layout, not just that one case.
+A folder per technical layer earns its cost once there are several
+features that need keeping apart; with one feature (verify a label), it
+just adds navigation overhead without adding clarity.
+
+**Rule applied:** add structure when a second real case shows up to
+generalize from, not in anticipation of one. Guessing the right
+abstraction shape in advance usually guesses wrong; refactoring from two
+concrete examples, once they exist, is easy and well-motivated.
+
+**Trade-off:** if this app ever grows a second, genuinely distinct
+feature, the flat layout would need to become more structured. Not a
+cost worth paying today for a one-feature app.

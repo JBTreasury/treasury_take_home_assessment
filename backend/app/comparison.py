@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass
 
 from . import config
+from .schemas import ApplicationData, ExtractedLabelData
 
 
 @dataclass
@@ -105,6 +106,30 @@ def verify_warning_statement(extracted_text: str, reported_all_caps_bold: bool) 
         extracted_value=extracted_text,
         detail="; ".join(issues) if issues else "matches exactly",
     )
+
+
+def compare_all(application: ApplicationData, extracted: ExtractedLabelData) -> list[FieldResult]:
+    """Every field comparison for one label, in display order.
+
+    Lives here rather than in the route so the batch generator can predict
+    verdicts with the same policy it is testing (ADR.md §6).
+    """
+    results = [
+        fuzzy_match("brand_name", application.brand_name, extracted.brand_name),
+        fuzzy_match("class_type", application.class_type, extracted.class_type),
+        fuzzy_match("net_contents", application.net_contents, extracted.net_contents),
+        fuzzy_match("name_address", application.name_address, extracted.name_address),
+        compare_abv(application.abv, extracted.abv, is_wine=(application.beverage_type == "wine")),
+        verify_warning_statement(extracted.warning_text, extracted.warning_all_caps_bold),
+    ]
+
+    # Country of origin is imports-only, so compared only when the applicant filled it
+    # in (blank = not applicable). Other type-conditional fields are out of scope -- ADR.md §11.
+    if application.country_of_origin.strip():
+        results.append(
+            fuzzy_match("country_of_origin", application.country_of_origin, extracted.country_of_origin)
+        )
+    return results
 
 
 def overall_status(results: list[FieldResult]) -> str:

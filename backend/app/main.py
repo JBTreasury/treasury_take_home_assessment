@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from . import config
-from .comparison import compare_abv, fuzzy_match, overall_status, verify_warning_statement
+from .comparison import compare_all, overall_status
 from .extraction import ExtractionError, extract_label_fields
 from .schemas import (
     ApplicationData,
@@ -69,9 +69,14 @@ def _sniff_image_type(data: bytes) -> str | None:
     return None
 
 
-def _validate_upload(filename: str, data: bytes) -> None:
-    """Enforce the same constraints TTB's own COLAs Online system uses."""
-    if _sniff_image_type(data) not in config.ALLOWED_IMAGE_CONTENT_TYPES:
+def _validate_upload(filename: str, data: bytes) -> str:
+    """Enforce the same constraints TTB's own COLAs Online system uses.
+
+    Returns the sniffed media type, so a caller can never accidentally supply
+    the spoofable client header in its place.
+    """
+    media_type = _sniff_image_type(data)
+    if media_type not in config.ALLOWED_IMAGE_CONTENT_TYPES:
         raise HTTPException(
             status_code=400,
             detail=f"{filename}: file content is not a valid JPEG or PNG image",
@@ -81,16 +86,16 @@ def _validate_upload(filename: str, data: bytes) -> None:
             status_code=400,
             detail=f"{filename}: exceeds {config.MAX_IMAGE_SIZE_BYTES / 1_000_000:.1f}MB limit",
         )
+    return media_type
 
 
 def parse_application_csv(text: str) -> dict[str, dict]:
     """Parse the batch CSV into {filename: row}, keyed so images match by name
     regardless of order (ADR.md §12).
 
-    Raises ValueError only on a structurally unusable CSV (no header, or a
-    missing required column). A single bad *value* is left for per-row
-    validation at verify time -- so it becomes one `error` row, never a
-    whole-batch failure. Blank optional cells are dropped so the model's
+    Raises ValueError only for a structurally unusable CSV (no header, missing
+    required column); a bad *value* becomes one `error` row at verify time,
+    never a whole-batch failure. Blank optional cells are dropped so model
     defaults apply; unknown columns are ignored.
     """
     reader = csv.DictReader(io.StringIO(text))
@@ -121,10 +126,8 @@ async def _verify_one(
     """Verify already-read image bytes. Takes bytes, not an UploadFile, because
     the batch path must read its uploads before the response starts -- see
     verify_batch."""
-    _validate_upload(filename, image_bytes)
-
-    # Sniffed type, not the unverified client header (validated above, so non-None).
-    media_type = _sniff_image_type(image_bytes)
+    # Sniffed type, not the unverified client header.
+    media_type = _validate_upload(filename, image_bytes)
 
     try:
         async with _extraction_semaphore:
@@ -132,25 +135,7 @@ async def _verify_one(
     except ExtractionError as e:
         return _error_result(filename, str(e))
 
-    results = [
-        fuzzy_match("brand_name", application_data.brand_name, extracted.brand_name),
-        fuzzy_match("class_type", application_data.class_type, extracted.class_type),
-        fuzzy_match("net_contents", application_data.net_contents, extracted.net_contents),
-        fuzzy_match("name_address", application_data.name_address, extracted.name_address),
-        compare_abv(
-            application_data.abv,
-            extracted.abv,
-            is_wine=(application_data.beverage_type == "wine"),
-        ),
-        verify_warning_statement(extracted.warning_text, extracted.warning_all_caps_bold),
-    ]
-
-    # Country of origin is imports-only, so compared only when the applicant filled it
-    # in (blank = not applicable). Other type-conditional fields are out of scope -- ADR.md §11.
-    if application_data.country_of_origin.strip():
-        results.append(
-            fuzzy_match("country_of_origin", application_data.country_of_origin, extracted.country_of_origin)
-        )
+    results = compare_all(application_data, extracted)
 
     return VerificationResult(
         filename=filename,
@@ -211,7 +196,9 @@ async def verify_batch(files: list[UploadFile] = File(...), data_csv: UploadFile
     keys = list(dict.fromkeys([*images_by_key, *rows_by_key]))
 
     async def _handle(key: str) -> VerificationResult:
-        image = images_by_key.get(key)
+        # pop, not get: releases each image's bytes as its task finishes, instead
+        # of holding the whole batch in memory until the last result streams out.
+        image = images_by_key.pop(key, None)
         entry = rows_by_key.get(key)
         # Prefer the image's own filename for display, else the CSV's.
         display = (image[0] if image else None) or (entry[0] if entry else key)
@@ -231,9 +218,7 @@ async def verify_batch(files: list[UploadFile] = File(...), data_csv: UploadFile
             return _error_result(display, f"unexpected error: {e}")
 
     async def _stream():
-        # meta first so the client knows the denominator (images + any
-        # CSV-only rows), then one line per result as it completes, then a
-        # summary. Results stream in completion order, not file order.
+        # Order: meta, then results as they complete, then summary (see docstring).
         yield json.dumps({"type": "meta", "total": len(keys)}) + "\n"
         counts = {"pass": 0, "review": 0, "fail": 0, "error": 0}
         tasks = [asyncio.create_task(_handle(k)) for k in keys]
