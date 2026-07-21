@@ -6,6 +6,23 @@ government-warning compliance.
 
 **See [ADR.md](./ADR.md) for the reasoning behind every design decision**
 
+## Live demo
+
+| | |
+| --- | --- |
+| App | https://label-verifier-web.onrender.com |
+| API | https://label-verifier-api-y6pi.onrender.com |
+| API health | https://label-verifier-api-y6pi.onrender.com/health |
+| API docs | https://label-verifier-api-y6pi.onrender.com/docs |
+
+The API's hostname has a `-y6pi` suffix because the plain
+`label-verifier-api.onrender.com` subdomain was already taken; the frontend
+reaches it through `VITE_API_BASE` (see [Deployment](#deployment)).
+
+`GET /` on the API returns `{"detail":"Not Found"}` by design — the app
+defines only `/verify`, `/verify/batch`, and `/health`. Use `/health` to
+check that it is up.
+
 ## Setup and run
 
 ### Backend
