@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+import { apiUrl } from "./api";
+
 const STATUS_LABEL = {
   pass: "Pass",
   review: "Needs Review",
@@ -136,7 +138,7 @@ function SingleVerifyForm() {
     );
 
     try {
-      const resp = await fetch("/api/verify", { method: "POST", body });
+      const resp = await fetch(apiUrl("/verify"), { method: "POST", body });
       if (!resp.ok) {
         const d = await resp.json();
         throw new Error(d.detail || "Verification failed");
@@ -304,7 +306,7 @@ function BatchVerifyForm() {
   const uploadBatch = (body) =>
     new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", "/api/verify/batch");
+      xhr.open("POST", apiUrl("/verify/batch"));
 
       const acc = [];
       let seen = 0; // chars of responseText already parsed

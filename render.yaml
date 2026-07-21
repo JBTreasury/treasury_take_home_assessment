@@ -1,0 +1,39 @@
+# Render blueprint. Two services: the FastAPI backend and the static frontend.
+# Deploy with: Render dashboard -> New -> Blueprint -> point at this repo.
+
+services:
+  # The API. A regular web service, not a serverless function -- a 300-file
+  # batch upload can approach serverless request-size limits (README, ADR.md §1).
+  - type: web
+    name: label-verifier-api
+    runtime: python
+    rootDir: backend
+    # Standard (2GB), not free/starter (512MB): verify_batch holds every upload
+    # in memory at once, so a full 300-image batch at the 1.5MB cap peaks near
+    # 600MB including base64 copies -- roughly 3x headroom here. Paid tiers are
+    # also always-on, so no cold start.
+    plan: standard
+    buildCommand: pip install -r requirements.txt
+    # $PORT is injected by Render; nothing in app/ binds a port itself.
+    # No --reload: it forks a watcher that Render's health check races.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false  # set in the dashboard, never committed
+
+  # The built Vite bundle. Talks to the API cross-origin (CORS is already open
+  # in main.py) rather than through a rewrite -- a proxied rewrite would buffer
+  # the batch endpoint's NDJSON stream and break live progress.
+  - type: web
+    name: label-verifier-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      # Full origin of the API service above, e.g.
+      # https://label-verifier-api.onrender.com  (no trailing slash).
+      # Baked in at build time, so changing it needs a redeploy.
+      - key: VITE_API_BASE
+        sync: false

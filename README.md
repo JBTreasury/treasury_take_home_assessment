@@ -60,18 +60,48 @@ on port 8000 (see `vite.config.js`).
 
 ### Deployment
 
-Backend: a regular host on Render, **not** a
-serverless-function platform — a 300-file batch upload can approach
-serverless request-size limits. Set `ANTHROPIC_API_KEY` as an environment
-variable, never in source.
+`render.yaml` defines both services, so Render's **New → Blueprint** flow
+sets them up from the repo. Two values are deliberately left unset there
+(`sync: false`) and must be entered in the dashboard:
 
-Frontend: static build (`npm run build`) to Render, with
-`/api` proxied or rewritten to the deployed backend URL.
+| Service | Variable | Value |
+| --- | --- | --- |
+| `label-verifier-api` | `ANTHROPIC_API_KEY` | your key — never in source |
+| `label-verifier-web` | `VITE_API_BASE` | the API's origin, e.g. `https://label-verifier-api.onrender.com` (no trailing slash) |
+
+Deploy the API first, then set `VITE_API_BASE` to its URL and deploy the
+frontend. `VITE_API_BASE` is inlined at build time, so changing it needs a
+frontend redeploy, not just a restart.
+
+Backend: a regular web service, **not** a serverless-function platform — a
+300-file batch upload can approach serverless request-size limits. Render
+injects `$PORT`; nothing in `app/` binds a port itself, so the port lives
+only in the start command. `backend/.python-version` pins 3.12, because the
+pinned `pydantic` predates 3.13.
+
+Frontend: a static build talking to the API **cross-origin** (CORS is already
+open — see security trade-offs below), rather than through a static-site
+rewrite. A rewrite proxy would buffer `/verify/batch`'s NDJSON response and
+break the live per-label progress the batch UI depends on. Locally none of
+this applies: `VITE_API_BASE` stays unset and the Vite proxy handles `/api`.
+
+**Batch size and memory:** `verify_batch` reads every upload into memory
+before streaming results, so a full 300-image batch at the 1.5MB cap peaks
+near 600MB once base64 copies are counted. That is why the API is on
+Standard (2GB) rather than a 512MB free/starter instance. On a smaller
+instance, lower `MAX_BATCH_SIZE` in `config.py` to match — roughly
+`(instance MB / 2) - overhead`.
+
+The frontend stays a **static** service: `vite build` emits plain
+`index.html` + JS/CSS with no server-side rendering (ADR.md §3), so it is
+CDN-served, free, and never cold-starts. Only the API is a running process.
 
 **Cold start:** free hosting tiers (e.g. Render) sleep after ~15 minutes
-idle; the first request after that can take 30-60 seconds. Use a paid
-always-on tier, or a free keep-alive ping (e.g. cron-job.org hitting
-`/health` every 10 minutes).
+idle; the first request after that can take 30-60 seconds. The Standard plan
+in `render.yaml` is always-on, so this does not apply as configured — it
+matters only if you drop the API to a free instance, in which case use a
+keep-alive ping (e.g. cron-job.org hitting `/health` every 10 minutes), the
+decision recorded in ADR.md §12.
 
 ## Architecture
 
