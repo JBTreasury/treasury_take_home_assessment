@@ -1,4 +1,4 @@
-"""Field comparison logic. Per-field strategies, not one generic score -- ADR.md §6.
+"""Field comparison logic. Per-field strategies, not one generic score -- ADR.md §9.
 
   - brand_name, class_type, net_contents, name_address -> fuzzy match
   - abv                                                -> numeric tolerance
@@ -112,7 +112,7 @@ def compare_all(application: ApplicationData, extracted: ExtractedLabelData) -> 
     """Every field comparison for one label, in display order.
 
     Lives here rather than in the route so the batch generator can predict
-    verdicts with the same policy it is testing (ADR.md §6).
+    verdicts with the same policy it is testing (ADR.md §9).
     """
     results = [
         fuzzy_match("brand_name", application.brand_name, extracted.brand_name),
@@ -124,7 +124,7 @@ def compare_all(application: ApplicationData, extracted: ExtractedLabelData) -> 
     ]
 
     # Country of origin is imports-only, so compared only when the applicant filled it
-    # in (blank = not applicable). Other type-conditional fields are out of scope -- ADR.md §11.
+    # in (blank = not applicable). Other type-conditional fields are out of scope -- ADR.md §14.
     if application.country_of_origin.strip():
         results.append(
             fuzzy_match("country_of_origin", application.country_of_origin, extracted.country_of_origin)

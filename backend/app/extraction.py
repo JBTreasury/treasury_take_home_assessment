@@ -1,4 +1,4 @@
-"""Vision extraction -- the one external network dependency (see ADR.md §4, §5, §8).
+"""Vision extraction -- the one external network dependency (see ADR.md §7, §8, §11).
 
 The caller supplies the httpx.AsyncClient so the connection pool is already warm.
 """

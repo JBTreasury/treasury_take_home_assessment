@@ -23,14 +23,14 @@ from .schemas import (
     VerificationResult,
 )
 
-# Global cap across ALL in-flight requests, not per-batch -- see ADR.md §7.
+# Global cap across ALL in-flight requests, not per-batch -- see ADR.md §10.
 _extraction_semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_EXTRACTIONS)
 
-# Shared client, opened once in lifespan for a warm connection pool -- see ADR.md §8.
+# Shared client, opened once in lifespan for a warm connection pool -- see ADR.md §11.
 _http_client: httpx.AsyncClient | None = None
 
 # CSV columns for the batch endpoint. `filename` keys each row to an image so
-# files and rows need not be in the same order -- see ADR.md §12.
+# files and rows need not be in the same order -- see ADR.md §5.
 CSV_REQUIRED_COLUMNS = ("filename", "brand_name", "class_type", "abv", "net_contents", "name_address")
 _CSV_OPTIONAL_BLANKABLE = ("beverage_type", "is_imported", "country_of_origin")
 _APP_FIELDS = set(ApplicationData.model_fields)  # valid keys; anything else in the CSV is ignored
@@ -38,7 +38,7 @@ _APP_FIELDS = set(ApplicationData.model_fields)  # valid keys; anything else in 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Open the shared HTTP client once at startup, not per-request (ADR.md §8)."""
+    """Open the shared HTTP client once at startup, not per-request (ADR.md §11)."""
     global _http_client
     async with httpx.AsyncClient() as client:
         _http_client = client
@@ -91,7 +91,7 @@ def _validate_upload(filename: str, data: bytes) -> str:
 
 def parse_application_csv(text: str) -> dict[str, dict]:
     """Parse the batch CSV into {filename: row}, keyed so images match by name
-    regardless of order (ADR.md §12).
+    regardless of order (ADR.md §5).
 
     Raises ValueError only for a structurally unusable CSV (no header, missing
     required column); a bad *value* becomes one `error` row at verify time,
@@ -164,7 +164,7 @@ async def verify_batch(files: list[UploadFile] = File(...), data_csv: UploadFile
     (completion order), then a final `summary` line. Matching is by filename
     (case-insensitive); a missing, extra, or failed item becomes a per-item
     `error` row rather than failing the batch -- only a structurally unusable
-    CSV is a 400. See ADR.md §12, §13.
+    CSV is a 400. See ADR.md §5, §6.
     """
     if len(files) > config.MAX_BATCH_SIZE:
         raise HTTPException(
@@ -182,7 +182,7 @@ async def verify_batch(files: list[UploadFile] = File(...), data_csv: UploadFile
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     # Match images to CSV rows by filename, case-insensitively, so
-    # "Old_Tom.PNG" still pairs with a CSV row of "old_tom.png" (ADR.md §12).
+    # "Old_Tom.PNG" still pairs with a CSV row of "old_tom.png" (ADR.md §5).
     def _key(name: str) -> str:
         return (name or "unknown").strip().casefold()
 
@@ -240,5 +240,5 @@ async def verify_batch(files: list[UploadFile] = File(...), data_csv: UploadFile
 
 @app.get("/health")
 async def health():
-    """Health check, and the keep-alive/warmup target -- see ADR.md §9."""
+    """Health check, and the keep-alive/warmup target -- see ADR.md §12."""
     return {"status": "ok"}

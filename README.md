@@ -1,17 +1,10 @@
-# TTB label verification prototype
+# TTB Label Verification Prototype
 
 Checks a photograph of an alcohol beverage label against its submitted
 application data, flagging brand name, class/type, ABV, net contents, and
 government-warning compliance.
 
 **See [ADR.md](./ADR.md) for the reasoning behind every design decision**
-(no database, Python, a plain function instead of a class, etc.) — this
-file covers setup and a brief summary.
-
-Requirements are grounded in TTB's official checklists of mandatory label
-information (distilled spirits, wine, malt beverage), cited by regulatory
-section throughout ADR.md rather than vendored here — citing a spec, not
-archiving it in the repo.
 
 ## Setup and run
 
@@ -31,8 +24,8 @@ verifying the backend before the frontend is involved.
 Run the tests (no pytest required):
 
 ```bash
-python3 tests/test_comparison.py   # comparison engine
-python3 tests/test_batch_csv.py    # batch CSV parsing / filename matching
+python3 tests/test_comparison.py 
+python3 tests/test_batch_csv.py  
 ```
 
 ### Generating a test batch
@@ -44,28 +37,15 @@ venv):
 
 ```bash
 cd scripts
-python generate_test_batch.py [count]   # count defaults to 300
+python generate_test_batch.py [count]
 ```
 
 It writes `test_labels/*.png`, `test_labels_application_data.csv`, and
-`test_labels_expected.csv` (filename → expected verdict and the defect
-injected to cause it, for diffing against a real run). In the batch form,
-drop the images on the image zone and the application-data CSV on the CSV
-zone — never the expected-verdicts file — matched by filename.
-
-It injects a deliberate mix — one third clean pass, one third near-miss
-(→ review), one third fail, with the failures split roughly half
-government-warning defects (not bold, not all caps, altered wording) and
-half other fields (brand, ABV, net contents, class/type). Independently:
-one third each distilled spirits / wine / beer, and 20% imports. So you can
-watch real pass/review/fail counts at scale.
-
-Near-misses are chosen by running the API's own `fuzzy_match` and keeping
-whichever candidate it calls "review", so `config.py`'s thresholds stay the
-single source of truth; every fixture is then checked through the real
-comparison logic and generation aborts if one wouldn't produce its intended
-verdict. It renders "GOVERNMENT WARNING" in a real cross-platform bold font
-so the bold check passes.
+`test_labels_expected.csv` In the batch form UI, drop the images on 
+the image zone and the application-data CSV on the CSV zone.
+Roughly 1/3 of the tests pass, 1/3 review, 1/3 fail.
+The test cases fuzzy match or fail in a number of different ways to test 
+the whole system.
 
 ### Frontend
 
@@ -80,12 +60,12 @@ on port 8000 (see `vite.config.js`).
 
 ### Deployment
 
-Backend: a regular container/ASGI host (Render, Railway), **not** a
+Backend: a regular host on Render, **not** a
 serverless-function platform — a 300-file batch upload can approach
 serverless request-size limits. Set `ANTHROPIC_API_KEY` as an environment
 variable, never in source.
 
-Frontend: static build (`npm run build`) to Vercel/Render/Netlify, with
+Frontend: static build (`npm run build`) to Render, with
 `/api` proxied or rewritten to the deployed backend URL.
 
 **Cold start:** free hosting tiers (e.g. Render) sleep after ~15 minutes
@@ -96,29 +76,35 @@ always-on tier, or a free keep-alive ping (e.g. cron-job.org hitting
 ## Architecture
 
 ```mermaid
-flowchart TB
-    client["Client browser<br/>Uploads labels"]
-    vision[["Vision / LLM API<br/>External call"]]
-
-    subgraph boundary["Prototype system boundary"]
-        direction LR
-        orch["Orchestrator<br/>Queues batch"]
-        comp["Comparison<br/>Fuzzy + exact"]
-        results["Results renderer<br/>Pass, review, fail"]
-        orch --> comp --> results
+flowchart LR
+    subgraph client["Browser — src/App.jsx"]
+        form["Upload form<br/>images + application CSV"]
+        table["Results table<br/>pass / review / fail"]
     end
 
-    client -- "uploads" --> orch
-    orch -- "per-label extraction call" --> vision
-    results -- "streamed results, no persistence" --> client
+    subgraph backend["FastAPI backend — stateless, nothing persisted"]
+        api["main.py<br/>/verify · /verify/batch"]
+        sem{{"global semaphore<br/>max 10 in flight"}}
+        extract["extraction.py<br/>the only external seam"]
+        comp["comparison.py<br/>fuzzy bands + verbatim warning check"]
+    end
 
-    style boundary fill:#ffffff,stroke:#2f855a,stroke-width:1px
+    vision[["Claude vision API"]]
+
+    form -- "multipart upload" --> api
+    api -- "one task per label" --> sem
+    sem --> extract
+    extract <-- "image out, fields back" --> vision
+    extract --> comp
+    comp -- "one NDJSON line per label,<br/>completion order" --> table
+
+    style backend fill:#ffffff,stroke:#2f855a,stroke-width:1px
 ```
 
-Everything inside the boundary runs locally. The vision API is the one
-thing that leaves the system — isolated in `extraction.py` so it's the only
-piece that would need to change if a real deployment's firewall blocked it
-(ADR.md §4).
+Everything but the vision call runs locally, and nothing is written to disk
+or a database. The vision API is the one thing that leaves the system —
+isolated in `extraction.py` so it's the only piece that would need to change
+if a real deployment's firewall blocked it.
 
 ## Project structure
 
@@ -162,7 +148,7 @@ implicit (inferred from context, anecdotes, or research) and ranked by
 consequence, not source — full table in
 [ADR.md §0](./ADR.md#0-requirements--explicit-vs-implicit).
 
-- **Two comparison strategies**, not one generic score: fuzzy matching
+- **Two comparison strategies** fuzzy matching
   (tolerant of cosmetic differences) for brand name, class/type, net
   contents, bottler name/address, and country of origin; strict exact
   matching for the government warning, which is federally fixed and admits
@@ -173,23 +159,6 @@ consequence, not source — full table in
 - **Stateless** — nothing persists beyond a single request/response.
 
 Full rationale, alternatives, and trade-offs are in [ADR.md](./ADR.md).
-
-## Latency target: per-label, not per-batch
-
-Sarah's "about 5 seconds" was a reaction to the prior vendor pilot's 30-40
-*seconds-per-label* failure — a per-label expectation, not a batch-level
-one. The batch requirement (200-300 labels at peak season) is a separate
-need: eliminating serial, one-at-a-time processing, not matching 5 seconds
-at 300x volume. A batch of 300 currently completes in roughly 1-2.5 minutes
-(bounded by the global concurrency cap in `config.py` — ADR.md §7), a large
-improvement over fully manual review even though it doesn't match the
-per-label number literally. See ADR.md §0 for how this and other ambiguous
-requirements were interpreted.
-
-During that wait the batch upload shows a live progress meter — a real upload
-percentage, then a per-label `142 / 300` count as results stream back from
-the server. The design (streaming newline-delimited JSON, chosen over a
-polled job so the app stays stateless) is in ADR.md §13.
 
 ## Scope
 
@@ -207,4 +176,4 @@ products.
 Out of scope: the remaining type-conditional disclosures (sulfite and
 coloring statements, age statements, etc.), the "same field of vision"
 placement rule, class-specific formatting rules, image-quality robustness,
-and COLA system integration — see ADR.md §11 for the full list and why.
+and COLA system integration — see ADR.md §14 for the full list and why.
